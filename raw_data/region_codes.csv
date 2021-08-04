@@ -1,0 +1,101 @@
+region_name,flyway_code,region_code,region_abbrev
+Africa,0,1,
+Alabama,2,2,AL
+Alaska,5,3,AK
+Alberta,6,4,AB
+Antarctica,0,99,
+Argentina,8,5,
+Arizona,4,6,AZ
+Arkansas,2,7,AR
+Asia,0,8,
+At Sea (oceans),0,94,
+Bahama Islands,9,9,BS
+Belize,7,12,BZ
+Bermuda,1,97,
+Bolivia,8,13,
+Brazil,8,10,
+British Columbia,6,11,BC
+California,4,14,CA
+Canada (Unknown State),6,,
+Chile,8,15,
+Colombia,8,16,CL
+Colorado,3,17,CO
+Connecticut,1,18,CT
+Costa Rica,7,19,CR
+Cuba,9,20,
+Delaware,1,21,DE
+District of Columbia,1,22,DC
+Dominican Republic and Haiti,9,31,
+Ecuador,8,23,
+El Salvador,7,78,SV
+Europe,0,24,
+Florida,1,25,FL
+"French Guiana, Guyana and Surinam",8,30,
+Georgia,1,27,GA
+Greenland,0,28,
+Guatemala,7,29,GT
+Honduras,7,32,HN
+Idaho,4,33,ID
+Illinois,2,34,IL
+Indiana,2,35,IN
+Iowa,2,36,IA
+Jamaica and Cayman Islands,9,37,
+Kansas,3,38,KS
+Kentucky,2,39,KY
+Lesser Antilles,9,41,
+Louisiana,2,42,LA
+Maine,1,44,ME
+Manitoba,6,45,MB
+Maryland,1,46,MD
+Massachusetts,1,47,MA
+Mexico,7,48,MX
+Michigan,2,49,MI
+Minnesota,2,50,MN
+Mississippi,2,51,MS
+Missouri,2,52,MO
+Montana,3,53,MT
+Nebraska,3,54,NE
+Nevada,4,55,NV
+New Brunswick,6,56,NB
+New Hampshire,1,58,NH
+New Jersey,1,59,NJ
+New Mexico,3,60,NM
+New York,1,61,NY
+Newfoundland and Labrador and St. Pierre et Miquelon,6,57,NL
+Nicaragua,7,62,NI
+North Carolina,1,63,NC
+North Dakota,3,64,ND
+Northwest Territories**,6,43,NT
+Nova Scotia,6,65,NS
+Nunavut**,6,40,NU
+"Oceania (including Hawaii), Australia, New Zealand and Phillipines",0,96,
+Ohio,2,66,OH
+Oklahoma,3,67,OK
+Ontario,6,68,ON
+Oregon,4,69,OR
+Panama,7,70,PM
+Paraguay,8,71,
+Pennsylvania,1,72,PA
+Peru,8,73,
+Prince Edward Island,6,75,PE
+Puerto Rico,9,74,
+Québec,6,76,QC
+Rhode Island,1,77,RI
+Russia,0,98,
+Saskatchewan,6,79,SK
+South Carolina,1,80,SC
+South Dakota,3,81,SD
+Tennessee,2,82,TN
+Texas,3,83,TX
+Unknown,0,0,Unknown
+Uruguay,8,84,
+US (Unknown State),X,,
+Utah,4,85,UT
+Venezuela,8,86,
+Vermont,1,87,VT
+Virginia,1,88,VA
+Washington,4,89,WA
+West Virginia,1,90,WV
+Wisconsin,2,91,WI
+Wyoming,3,92,WY
+Yukon Territory,6,93,YT

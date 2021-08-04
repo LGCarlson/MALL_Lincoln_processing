@@ -1,0 +1,783 @@
+---
+title: "Encounter processing"
+author: "LGCarlson"
+date: "7/30/2021"
+output: html_document
+---
+
+
+## Encounter codes
+
+_age:_
+
+* 0 unknown
+
+* 1 AHY
+
+* 2 HY
+
+* 3 Juvenile
+
+* 4 Local
+
+* 5 SY
+
+* 6 ASY
+
+_sex:_
+
+* 0 unknown
+
+* 4 M
+
+* 5 F
+
+_b_flyway / _r_flyway:_
+
+* 2 Mississippi
+
+* 3 Central
+
+* 6 Canada
+
+_b_region / r_region:_
+[codes here](https://www.pwrc.usgs.gov/BBL/MANUAL/reg.cfm#region)
+Canadian categories to keep for b_region: (US Flyways okay)
+
+* 43 Northwest Territories
+
+* 40 Nunavut
+
+* 04 Alberta
+
+* 79 Saskatchewan
+
+* 45 Manitoba
+
+* 68 Ontario
+
+_b_month / r_month:_
+
+* 1-12 or
+
+* 82 Summer (06/21/YY thru 09/21/YY)
+
+* 83 Spring (03/20/YY thru 06/20/YY)
+
+* 92 Winter (12/21/YY-1 thru 03/19/YY)
+
+* 93 Fall (09/22/YY thru 12/20/YY)
+
+* 94 Hunting Season (09/01/YY thru 03/31/YY+1)
+
+* 99 Unknown month and day of banding or encounter
+
+_b_day / r_day:_
+
+* 1-31 or
+
+* 41 1st ten days in month
+
+* 42 2nd ten days in month
+
+* 43 3rd ten days in month
+
+* 45 encountered during special hunting seasons
+
+* 51-81 Encounter letter date or postmark date (plus 50)
+
+* 99 Unknown day of banding or encounter
+
+_how_obt:_
+
+* 1 Shot
+
+_hunt_season_surv:_
+
+* number of hunting seasons survived (dbl)
+
+_pres_cond:_
+
+Categories to keep:
+
+Code Bird condition  Band status
+
+* 03	DEAD	UNKNOWN
+
+* 04	DEAD	LEFT ON BIRD
+
+* 05	DEAD	REMOVED
+
+_status:_
+
+* 2 transported
+
+* 3 normal wild
+
+* 4 hand reared
+
+* 5 sick, injured, deformity
+
+* 6,7,8 experimental, etc
+
+_sp_num:_
+
+* 1320 MALL
+
+_ai_vai:_
+
+* Categories to keep:
+
+* Federal numbered metal band only. 
+
+* Captured by spotlighting. 
+
+* Misc. metal band (State, Provincial etc) with address or telephone number, plus Federal band.
+
+* Miscellaneous band, Federal band, plus auxiliary marker(s). 
+
+
+## Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(here)
+library(lubridate)
+library(janitor)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(ggspatial)
+library(sf)
+library(purrr)
+```
+
+```{r}
+theme_set(theme_light())
+
+#set personalized plotting theme
+LGCtheme <- theme_light() + theme(panel.background = element_blank(), 
+                panel.grid = element_blank(), 
+                axis.text = element_text(size = 13), 
+                axis.title = element_text(size = 14), 
+                legend.text = element_text(size = 13), 
+                legend.title = element_text(size = 14), 
+                strip.background = element_blank(), 
+                strip.text = element_text(size = 13, color = "black"))
+
+gmri_qual_extended<-c("#003A54","#00608A","#5D96AF","#3F4B24","#6F7E4B","#97AA5C","#A8B212","#AF9700","#EACA00","#FFE961","#BB3F0E", "#EA4F12","#F4916B","#00736D", "#55A29E","#A0CDCB","#767676","#A7A7A7","#E2E2E2")
+```
+
+
+
+```{r}
+#Create custom "not in" function
+`%not_in%` <- purrr::negate(`%in%`)
+
+# Midcontinent Canadian provinces
+provs_keep<-c(43,40,04,79,45,68)
+
+# Pacific or Atlantic Canadian provinces
+provs_remove<-c(11,56,57,65,75,76,93)
+
+# Band/capture types to keep
+ai_vai_vec<-c("Federal numbered metal band only.","Captured by spotlighting.", "Misc. metal band (State, Provincial etc) with address or telephone number, plus Federal band.","Miscellaneous band, Federal band, plus auxiliary marker(s).")
+
+# What to do with unknown encounter dates
+unknown_date_tib<-tibble(r_day=c(1:31,41,42,43,51:81,99),r_day_adj=c(1:31,9,19,28,rep(28,32)))
+
+# Name flyways
+r_flyway_tib<-tibble(r_flyway=c(1,2,3,4,5,6,7), 
+                     r_flyway_name=c("Atlantic","Mississippi","Central","Pacific","Alaska","Canada","Mexico"))
+
+# Region (state/province) codes and names
+r_region_codes<-read_csv(here::here("raw_data", "region_codes.csv")) %>% 
+  filter(!is.na(region_abbrev)) %>% 
+  dplyr::select(-region_name,-flyway_code) %>% 
+  dplyr::rename("r_region" = "region_code","r_region_abbrev" = "region_abbrev")
+```
+
+## Load data
+
+```{r, echo=FALSE, message=F, warning=F}
+# Load in encounters from birds banded in Canada
+ca_enc<-read_csv(here::here("raw_data", "encs_bandedin_canada.csv")) %>% 
+  janitor::clean_names() %>% 
+  mutate(b_flyway_name = "Canada") %>% 
+  filter(b_region %in% provs_remove == F)
+          #keep only data from birds banded in mid-continent Canadian provinces
+
+# Load in encounters from birds banded in the Central flyway
+cl_enc<-read_csv(here::here("raw_data", "encs_bandedin_central.csv")) %>% 
+  janitor::clean_names() %>% 
+  mutate(b_flyway_name = "Central") 
+
+# Load in encounters from birds banded in the Miss flyway
+ms_enc<-read_csv(here::here("raw_data", "encs_bandedin_miss.csv")) %>% 
+  janitor::clean_names() %>% 
+  mutate(b_flyway_name = "Mississippi") 
+```
+
+
+```{r}
+# Initial data check
+
+#should all be 6
+table(ca_enc$b_flyway)
+
+#should all be 3
+table(cl_enc$b_flyway)
+
+#should all be 2
+table(ms_enc$b_flyway)
+
+#can be any flyway
+table(ca_enc$r_flyway);table(cl_enc$r_flyway);table(ms_enc$r_flyway)
+```
+
+
+```{r}
+#Join all encounters 
+
+all_encs<-bind_rows(ca_enc, cl_enc, ms_enc) %>% 
+  left_join(r_flyway_tib, by = "r_flyway")
+```
+
+
+
+## Check data
+
+```{r}
+#should all be 1
+table(all_encs$how_obt) 
+
+# will need to remove years > 2011
+table(all_encs$r_year)
+
+# will need to remove (if unknown) or specify (approx known) non-real months
+table(all_encs$r_month)
+
+# will need to remove (if unknown) or specify (approx known) non-real days
+table(all_encs$r_day)
+
+# will need to remove (if unknown) or specify (approx known) non-real days
+table(all_encs$b_day)
+```
+
+
+## Processing code
+
+_Modifications (in order of operation):_
+
+* remove indv. where banding month is unknown
+
+* remove indv. where recovery month is unknown
+
+* if b_day is unknown (99), assign b_day = 28
+
+* join unknown_date_tib by r_day, so that r_day_adj can be used when recovery month is known, but recovery day is unknown
+
+* create a new column with banding date (b_date)
+
+* create a new column with recovery date (r_date)
+
+* create a new column with recovery date in julian days (r_doy)
+
+* limit years to 1950-2020
+
+* keep only pre-season banded birds (banding months 6-9)
+
+* keep only normal, wild birds  (status = 3)
+
+* keep only known sexes (sex = 4,5)
+
+* keep only desired ai_vai's
+
+* remove birds for which hss cannot be calculated (hunt_season_survived = 99)
+
+* re-order columns manually
+
+* remove 3 weird duplicate bands
+
+```{r}
+final_encs<-all_encs %>% 
+  filter(b_month <= 12, 
+         r_month <= 12) %>% 
+  mutate(b_day = ifelse(b_day == 99, 28, b_day)) %>% 
+  left_join(unknown_date_tib, by="r_day") %>% 
+  mutate(b_date = as.Date(paste(b_year,b_month,b_day, sep = "-"))) %>% 
+  mutate(r_date = as.Date(paste(r_year,r_month,r_day_adj, sep = "-"))) %>% 
+  mutate(r_doy = lubridate::yday(r_date)) %>% 
+  filter(b_year >=1950 & b_year <=2020) %>% 
+  filter(b_month >=6 & b_month <=9) %>% 
+  filter(r_month %in% c(9,10,11,12,1,2)) %>% 
+  filter(ifelse(r_month == 2, r_doy < 75, r_day < 366)) %>% 
+  filter(status == 3) %>% 
+  filter(sex == 4 | sex == 5) %>% 
+  filter(ai_vai %in% ai_vai_vec) %>% 
+  filter(hunt_season_surv != 99) %>% 
+  left_join(r_region_codes, by = c("b_region" = "r_region")) %>% 
+  dplyr::rename("b_region_abbrev" = "r_region_abbrev") %>% 
+  left_join(r_region_codes, by = "r_region") %>% 
+  dplyr::select(band,age,sex,sp_num,how_obt,pres_cond,status,hunt_season_surv,b_flyway,b_flyway_name,
+                b_date,b_year,b_month,b_day,b_region,b_region_abbrev,b_dir,b_coord_precision,
+                b_lat,b_long,gisb_lat,gisb_long,
+                r_flyway,r_flyway_name,r_date,r_year,r_month,r_day,r_region,r_region_abbrev,r_dir,
+                r_coordinate_precision,r_lat,r_long,gisr_lat,gisr_long,ai_vai,everything())  %>% 
+  filter(!is.na(gisr_long)) %>% 
+  filter(!is.na(gisr_lat)) %>% 
+  filter(band %not_in% c("135748061","149776745","236737635"))
+
+```
+
+
+
+
+```{r}
+#confirm that "band" field works as a unique identifier (it should) 
+length(final_encs$band)
+
+length(unique(final_encs$band))
+```
+
+
+## Spatial processing
+
+```{r, message=F, warning=F, echo=F}
+# load in world and state sf
+world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+
+states <- rnaturalearth::ne_states(country = c("canada", "united states of america"), returnclass = "sf")
+
+
+#load in flyway shapefiles
+cent_flyway <- sf::st_read(here::here("shapefiles","Central_Flyway.shp")) %>% 
+  st_transform(crs = "+init=epsg:4326") 
+
+miss_flyway <- sf::st_read(here::here("shapefiles","Mississippi_Flyway.shp")) %>% 
+  st_transform(crs = 4326) 
+
+pac_flyway <- sf::st_read(here::here("shapefiles","Pacific_Flyway.shp")) %>% 
+  st_transform(crs = 4326) 
+
+atl_flyway <- sf::st_read(here::here("shapefiles","Atlantic_Flyway.shp")) %>% 
+  st_transform(crs = 4326) 
+```
+
+Plot banding locations. Will need to remove birds banded in the Pacific flyway (outside mid-continent). 
+
+```{r}
+ggplot(data = world) + geom_sf(fill="white") + 
+  geom_sf(data=states, fill=NA) + 
+  geom_sf(data=cent_flyway, fill="#6F7E4B") +
+  geom_sf(data=miss_flyway, fill="#00608A") + 
+  geom_point(data=final_encs, aes(x=gisb_long, y=gisb_lat),size=0.85) +
+  coord_sf(xlim = c(-130, -70), ylim = c(25, 70), expand = FALSE) +
+  labs(x="Banding longitude", y="Banding latitude", title="Banding locations (full data)")
+```
+
+Remove encounters of birds that were *banded* in Pacific flyway. Can be *encountered* anywhere still.
+
+```{r}
+#Create spatial data
+final_encs_sf<-st_as_sf(final_encs, coords = c("gisb_long","gisb_lat"), crs = 4326) 
+class(final_encs_sf)
+
+length(unique(final_encs_sf$band))
+```
+
+```{r}
+#This selects all individuals that were banded inside the Pacific flyway shapefile
+banded_inpac <- final_encs_sf[pac_flyway, ]
+
+#Creates a vector of Pacific flyway banded individuals
+enc_to_remove<-c(banded_inpac$band)
+
+#Creates dataframe of Pacific flyway banded individuals to plot and check for correctness
+final_bands_inpac<-final_encs %>% 
+  filter(band %in% enc_to_remove)
+
+#Plot to confirm
+ggplot(data = world) + geom_sf(fill="white") + 
+  geom_sf(data=states, fill=NA) + 
+  geom_sf(data=pac_flyway, fill="#F4916B") +
+  geom_point(data=final_bands_inpac, aes(x=gisb_long, y=gisb_lat),size=0.85) +
+  coord_sf(xlim = c(-130, -70), ylim = c(25, 70), expand = FALSE) + 
+  labs(x="Banding longitude", y="Banding latitude", title="Banding locations (to remove)")
+```
+
+```{r}
+#Remove individuals banded in Pacific flyway
+mcb_encs<-final_encs %>% 
+  filter(band %not_in% enc_to_remove)
+
+#Plot to confirm
+ggplot(data = world) + geom_sf(fill="white") + 
+  geom_sf(data=states, fill=NA) + 
+  geom_sf(data=cent_flyway, fill="#6F7E4B") +
+  geom_sf(data=miss_flyway, fill="#00608A") + 
+  geom_point(data=mcb_encs, aes(x=gisb_long, y=gisb_lat),size=0.85) +
+  coord_sf(xlim = c(-130, -70), ylim = c(25, 70), expand = FALSE) + 
+  labs(x="Banding longitude", y="Banding latitude", title="Banding locations (filtered data)")
+
+```
+
+```{r}
+# Length of filtered dataset
+length(mcb_encs$band)
+
+# Banded in midcontinent + banded in Pacific should = length of original dataframe
+length(mcb_encs$band) + length(final_bands_inpac$band)
+
+length(final_encs$band)
+#It does!
+```
+
+
+# Spatial categorizing
+
+```{r}
+# Create new column to categorize regions midcontinent US, midcontinent Canada, and other
+
+mcb_encs$r_region_filter = NA
+
+mcb_encs$r_region_filter[mcb_encs$r_flyway_name == "Central"] = "Midcontinent US"
+
+mcb_encs$r_region_filter[mcb_encs$r_flyway_name == "Mississippi"] = "Midcontinent US"
+
+mcb_encs$r_region_filter[mcb_encs$r_flyway_name == "Pacific"] = "Other"
+
+mcb_encs$r_region_filter[mcb_encs$r_flyway_name == "Atlantic"] = "Other"
+
+mcb_encs$r_region_filter[mcb_encs$r_region_abbrev == "AK"] = "Other"
+
+mcb_encs$r_region_filter[mcb_encs$r_region_abbrev == "MX"] = "Other"
+
+mcb_encs$r_region_filter[mcb_encs$r_flyway_name == "Canada"] = "Other"
+
+mcb_encs$r_region_filter[mcb_encs$r_region_abbrev == "ON"] = "Midcontinent Canada"
+
+mcb_encs$r_region_filter[mcb_encs$r_region_abbrev == "MB"] = "Midcontinent Canada"
+
+mcb_encs$r_region_filter[mcb_encs$r_region_abbrev == "SK"] = "Midcontinent Canada"
+
+mcb_encs$r_region_filter[mcb_encs$r_region_abbrev == "AB"] = "Midcontinent Canada"
+
+
+table(mcb_encs$r_region_filter)
+
+# There are 8 encounters that don't have a recovery region associated with them (even though they do have real GPS points) so will not be categorized correctly (...consider deleting?)
+
+mcb_encs %>% 
+  filter(is.na(r_region_filter)==T)
+```
+
+
+```{r, fig.height=4, fig.width=8}
+#Visualize encounter locations and check region assignments
+ggplot(data = world) + geom_sf(fill=NA) + 
+  geom_sf(data=states, fill=NA) + 
+  geom_point(data=mcb_encs, aes(x=gisr_long, y=gisr_lat, color=r_region_filter),size=0.85) +
+  coord_sf(xlim = c(-130, -70), ylim = c(25, 70), expand = FALSE) + 
+  labs(x="Encounter longitude", y="Encounter latitude", color="Recovery region", title="Encounter location")
+```
+
+
+## Save new datafile
+
+```{r}
+## write_csv(mcb_encs, here::here("proc_data","encounter_data.csv"))
+```
+
+
+## Spatial visualization 
+
+
+```{r, fig.height=8, fig.width=6}
+#Visualize encounter locations
+ggplot(data = world) + geom_sf(fill=NA) + 
+  geom_sf(data=states, fill=NA) + 
+  geom_sf(data=cent_flyway, fill="#6F7E4B",alpha=0.6) +
+  geom_sf(data=miss_flyway, fill="#00608A",alpha=0.6) + 
+  geom_point(data=mcb_encs, aes(x=gisr_long, y=gisr_lat),size=0.85) +
+  coord_sf(xlim = c(-130, -70), ylim = c(25, 70), expand = FALSE) + 
+  labs(x="Encounter longitude", y="Encounter latitude")
+```
+
+
+
+## Visualize data
+
+Majority of encountered individuals encountered in the midcontinent were banded in Canada.
+More males encountered than females. 
+
+```{r, fig.height=4, fig.width=10}
+mcb_encs %>% 
+  group_by(r_year, sex, b_flyway_name) %>% 
+  summarise(total_encountered = n()) %>% 
+  ggplot(aes(x=r_year, y=total_encountered, color=as.factor(sex))) + geom_line() + 
+  facet_wrap(~b_flyway_name, ncol=3) + 
+  scale_color_manual(values=c("#5D96AF","#C07F9C")) + LGCtheme + theme(legend.position = "none") + 
+  labs(x="Encounter Year", y="Total encountered", 
+       title="MALLs encountered by banding flyway, by sex")
+```
+
+Majority of individuals are encountered in Midcontinent US
+
+```{r, fig.height=4, fig.width=10}
+mcb_encs %>% 
+  filter(r_flyway > 0 & is.na(r_flyway) == F) %>% 
+  group_by(r_year, b_flyway_name, r_region_filter) %>% 
+  summarise(total_encountered = n()) %>% 
+  ggplot(aes(x=r_year, y=total_encountered, color=b_flyway_name)) + geom_line() + 
+  facet_wrap(~forcats::fct_reorder(r_region_filter,total_encountered, .fun = sum, .desc = T), ncol=3) + 
+  scale_color_manual(values=c(gmri_qual_extended[13],gmri_qual_extended[5],gmri_qual_extended[2])) + 
+  LGCtheme + theme(legend.position = "bottom") + 
+  labs(x="Encounter Year", y="Total encountered", color="Banding flyway",
+       title="MALLs encountered in each region, by banding flyway")
+```
+
+Most individuals were ecountered during Oct, Nov, Dec
+
+```{r, fig.height=4.5, fig.width=7.5}
+mcb_encs %>% 
+  mutate(r_month = as.factor(r_month)) %>% 
+  group_by(r_year, r_month) %>% 
+  summarise(total_encountered = n()) %>% 
+  ggplot(aes(x=r_year, y=total_encountered, color=forcats::fct_reorder(r_month, total_encountered, .desc = T))) + 
+  geom_line() + scale_color_manual(values = gmri_qual_extended) + LGCtheme +
+  labs(x="Encounter Year", y="Total encountered", 
+       title="MALLs encountered by month", color="Encounter month")
+
+```
+
+
+More mid-continent banded mallards and encountered in Arkansas than in any other state [wenowdis](https://www.youtube.com/watch?v=2kQxVwYwrME)
+
+```{r, fig.height=8, fig.width=5.25}
+mcb_encs %>% 
+  group_by(r_region_abbrev, r_flyway_name) %>% 
+  summarise(total_encountered = n()) %>% 
+  filter(!is.na(r_region_abbrev), 
+         r_region_abbrev != "Unknown") %>% 
+  ggplot(aes(x=forcats::fct_reorder(r_region_abbrev,total_encountered,.fun = sum, .desc = F), 
+          y=total_encountered, fill=forcats::fct_reorder(r_flyway_name,total_encountered,.fun = sum, .desc = T))) + 
+  geom_bar(stat = "identity") + coord_flip() +
+  scale_fill_manual(values=c(gmri_qual_extended[2],gmri_qual_extended[5],gmri_qual_extended[13],
+                    gmri_qual_extended[16],gmri_qual_extended[10],gmri_qual_extended[7],gmri_qual_extended[11])) + 
+  LGCtheme + theme(axis.text.y = element_text(size=9, angle=0)) +
+  labs(x="Postal abbreviation",y="Total encountered", title="MALLs encountered by state",fill="Region flyway") +
+  theme(legend.position = c(0.8,0.18))
+
+```
+
+
+```{r, fig.height=8, fig.width=6}
+#Visualize encounter locations
+ggplot(data = world) + geom_sf(fill=NA) + 
+  geom_sf(data=states, fill=NA) + 
+  geom_sf(data=cent_flyway, fill="lightgrey",alpha=0.6) +
+  geom_sf(data=miss_flyway, fill="lightgrey",color=NA,alpha=0.6) + 
+  geom_point(data=mcb_encs, aes(x=gisr_long, y=gisr_lat),size=0.85) +
+  coord_sf(xlim = c(-130, -65), ylim = c(23, 68), expand = FALSE) + 
+  labs(x="Encounter longitude", y="Encounter latitude")
+```
+
+
+## Additional mapping
+
+```{r}
+enc_flyways_sf<-st_as_sf(mcb_encs, coords = c("gisr_long","gisr_lat"), crs = 4326) 
+class(enc_flyways_sf)
+
+recv_inpac <- enc_flyways_sf[pac_flyway, ]
+recv_inatl <- enc_flyways_sf[atl_flyway, ]  
+recv_incent <- enc_flyways_sf[cent_flyway, ]
+recv_inmiss <- enc_flyways_sf[miss_flyway, ]
+
+pac<-tibble(band=c(recv_inpac$band)) %>% 
+  mutate(r_flyway_fws = "Pacific")
+atl<-tibble(band=c(recv_inatl$band)) %>% 
+  mutate(r_flyway_fws = "Atlantic")
+cent<-tibble(band=c(recv_incent$band)) %>% 
+  mutate(r_flyway_fws = "Midcontinent")
+miss<-tibble(band=c(recv_inmiss$band)) %>% 
+  mutate(r_flyway_fws = "Midcontinent")
+
+add_r_flyways<-bind_rows(pac,atl,cent,miss) 
+
+mcb_box<-mcb_encs %>% 
+  left_join(add_r_flyways, by = "band") %>% 
+  mutate(gisb_latbox = 1 * gisb_lat %/% 1) %>% 
+  mutate(gisb_longbox = 2 * gisb_long %/% 2) 
+
+mcb_encs %>% 
+  left_join(add_r_flyways, by = "band") %>% 
+  filter(is.na(r_flyway_fws))
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+enc1x2<-mcb_encs %>% 
+  mutate(gisr_latbox = 1 * gisr_lat %/% 1) %>% 
+  mutate(gisr_longbox = 2 * gisr_long %/% 2) %>% 
+  group_by(gisr_latbox, gisr_longbox) %>% 
+  summarise(n=n())
+```
+
+
+```{r}
+ggplot(data=enc1x2) + geom_sf(data = world,fill=NA) + 
+  geom_sf(data=states, fill=NA) + 
+  geom_sf(data=cent_flyway, fill="lightgrey",alpha=0.6) +
+  geom_sf(data=miss_flyway, fill="lightgrey",color=NA,alpha=0.6) + 
+  geom_point(data=enc1x2, aes(x=gisr_longbox, y=gisr_latbox,size=n)) + 
+  coord_sf(xlim = c(-130, -65), ylim = c(23, 68), expand = FALSE) + 
+  labs(x="Encounter longitude", y="Encounter latitude")
+```
+
+```{r}
+
+mex<-c("Jalisco","Aguascalientes","Nayarit","Guanajuato","Queretaro de Arteaga","Hidalgo","Michoacan de Ocampo","Mexico","Distrito Federal","Colima","Morelos","Yucatan","Campeche","Puebla","Quintana Roo","Tlaxcala","Guerrero","Oaxaca","Chiapas", "Tabasco","Chihuahua","Coahuila De Zaragoza","Durango","Zacatecas","San Luis Potosi","Nuevo Leon","Tamaulipas","Veracruz-Llave")
+
+cent_nomex<-cent_flyway %>% filter(Area_Name %not_in% mex)
+```
+
+
+```{r}
+
+cent_flyway <- sf::st_read("D:/UAM/GIS_Layers/Central_Flyway.shp") %>% 
+  st_transform(crs = "+init=epsg:4326")  %>% 
+  summarise()
+
+miss_flyway <- sf::st_read("D:/UAM/GIS_Layers/Mississippi_Flyway.shp") %>% 
+  st_transform(crs = 4326) %>% 
+  summarise()
+
+
+lakes <- st_read("D:/UAM/GIS_Layers/ne_10m_lakes.shp") %>% 
+  filter(name %in% c("Lake Erie","Lake Huron", "Lake Michigan", "Lake Ontario", "Lake Superior"))
+```
+
+
+```{r}
+enc1x1<-mcb_encs %>% 
+  mutate(gisr_latbox = 1 * gisr_lat %/% 1) %>% 
+  mutate(gisr_longbox = 1 * gisr_long %/% 1) %>% 
+  group_by(gisr_latbox, gisr_longbox) %>% 
+  summarise(n=n()) 
+
+hist(enc1x1$n)
+```
+
+
+```{r, fig.height=6,fig.width=7}
+ggplot(data=enc1x1) + 
+  geom_tile(data=enc1x1, aes(x=gisr_longbox, y=gisr_latbox,fill=n)) + 
+  scale_fill_gradient(low="#ededed", high = "black",breaks = c(0, 2000, 6000, 10000,14000,18000)) +
+  geom_sf(data=cent_flyway, fill=NA,alpha=0.6,size=0.3) +
+  geom_sf(data=miss_flyway, fill=NA,alpha=0.6,size=0.3) + 
+  geom_sf(data = world,fill=NA,size=0.3) + 
+  coord_sf(xlim = c(-130, -65), ylim = c(23, 67), expand = FALSE) + 
+  scale_x_continuous(breaks=c(-120,-100,-80)) + 
+  scale_y_continuous(breaks=c(30,45,60)) + 
+  theme(panel.grid = element_blank()) + 
+  guides(fill = guide_colourbar(ticks = T, barwidth = 0.75, barheight = 6, nbin = 6)) +
+  labs(x="", y="",fill="Encounters (n)") +
+  theme(axis.text = element_text(size=11), axis.text.y = element_text(angle=90,hjust = 0.5))
+
+
+#ggsave("recoveries_heatmap.pdf", plot=last_plot(), height = 5, width = 6)
+```
+
+
+
+
+```{r, fig.height=6,fig.width=7}
+ggplot(data=mcb_encs) + 
+  geom_sf(data = world,fill=NA,size=0.3) + 
+  geom_sf(data=cent_flyway, fill=NA,alpha=0.6,size=0.3) +
+  geom_sf(data=miss_flyway, fill=NA,alpha=0.6,size=0.3) + 
+  geom_point(data=mcb_encs, aes(x=gisr_long, y=gisr_lat),size=0.75, alpha=0.25) +
+  theme(panel.grid = element_blank()) + 
+  labs(x="", y="") +  
+  coord_sf(xlim = c(-130, -65), ylim = c(23, 67), expand = FALSE) + 
+  scale_x_continuous(breaks=c(-120,-100,-80)) + 
+  scale_y_continuous(breaks=c(30,45,60)) + 
+  theme(axis.text = element_text(size=11), axis.text.y = element_text(angle=90,hjust = 0.5))
+
+
+#ggsave("recoveries_points.pdf", plot=last_plot(), height = 5, width = 6)
+```
+
+
+
+```{r}
+enc1x1$labels = NA
+enc1x1$labels[enc1x1$n <=500] = "1-500"
+enc1x1$labels[enc1x1$n > 500] = "501-1000"
+enc1x1$labels[enc1x1$n >1000] = "1001-5000"
+enc1x1$labels[enc1x1$n >5000] = "5000-10000"
+enc1x1$labels[enc1x1$n >10000] = ">10000"
+
+enc1x1$breaks = NA
+enc1x1$breaks[enc1x1$n <=500] = 1
+enc1x1$breaks[enc1x1$n > 500] = 2
+enc1x1$breaks[enc1x1$n >1000] = 3
+enc1x1$breaks[enc1x1$n >5000] = 4
+enc1x1$breaks[enc1x1$n >10000] = 5
+
+enc1x1$breaks = as.character(enc1x1$breaks)
+```
+
+
+```{r}
+ggplot(data=mcb_encs) + 
+  geom_sf(data = world,fill=NA,size=0.2) + 
+  geom_sf(data=cent_flyway, fill=NA,alpha=0.6,size=0.2) +
+  geom_sf(data=miss_flyway, fill=NA,alpha=0.6,size=0.2) + 
+  geom_point(data=enc1x1, aes(x=gisr_longbox, y=gisr_latbox,size=n,color=breaks)) +
+  scale_size_continuous(range=c(0.25,7), breaks = c(500,1000,5000,10000,15000), 
+                        labels = c("1 - 500","501 - 1,000","1,001 - 5,000","5,001 - 10,000","> 10,000")) +
+  scale_color_manual(values=rev(c("gray20", "gray30", "gray50","gray70", "gray90"))) +
+  theme(panel.grid = element_blank()) + 
+  #guides(color = FALSE) +
+  labs(x="", y="",size="Recoveries") +  
+  coord_sf(xlim = c(-130, -64), ylim = c(20, 65), expand = FALSE) + 
+  scale_x_continuous(breaks=c(-120,-100,-80)) + 
+  scale_y_continuous(breaks=c(30,45,60)) + 
+  theme(axis.text = element_text(size=11), axis.text.y = element_text(angle=90,hjust = 0.5))
+
+
+#ggsave("recoveries_points_sizecolor2.pdf", plot=last_plot(), height = 8, width = 8)
+```
+
+
+```{r}
+ggplot(data=mcb_encs) + 
+  geom_sf(data = world,fill=NA,size=0.3) + 
+  geom_sf(data=cent_flyway, fill=NA,alpha=0.6,size=0.3) +
+  geom_sf(data=miss_flyway, fill=NA,alpha=0.6,size=0.3) + 
+  geom_point(data=enc1x1, aes(x=gisr_longbox, y=gisr_latbox,size=n,color=breaks)) +
+  scale_size_continuous(range=c(0.25,7)) +
+  theme(panel.grid = element_blank()) + 
+  labs(x="", y="",size="Encounters (n)") +  
+  coord_sf(xlim = c(-130, -65), ylim = c(23, 67), expand = FALSE) + 
+  scale_x_continuous(breaks=c(-120,-100,-80)) + 
+  scale_y_continuous(breaks=c(30,45,60)) + 
+  theme(axis.text = element_text(size=11), axis.text.y = element_text(angle=90,hjust = 0.5))
+
+
+#ggsave("recoveries_pointsize.pdf", plot=last_plot(), height = 5, width = 6)
+```
+
+
